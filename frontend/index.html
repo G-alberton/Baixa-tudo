@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Downloader</title>
+
+<style>
+
+body{
+  font-family:Arial;
+  background:#f5f5f5;
+  padding:30px;
+}
+
+.container{
+  background:white;
+  max-width:900px;
+  margin:auto;
+  padding:20px;
+  border-radius:10px;
+}
+
+textarea{
+  width:100%;
+  height:300px;
+}
+
+button{
+  margin-top:20px;
+  padding:12px 20px;
+  background:#2563eb;
+  color:white;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+</style>
+
+</head>
+<body>
+
+<div class="container">
+
+<h1>Downloader de Arquivos</h1>
+
+<textarea id="dados"></textarea>
+
+<button onclick="enviar()">
+Baixar ZIP
+</button>
+
+<p id="status"></p>
+
+</div>
+
+<script>
+
+async function enviar(){
+
+  const texto =
+    document.getElementById("dados").value;
+
+  const status =
+    document.getElementById("status");
+
+  status.innerText = "Processando...";
+
+  try {
+
+    const response = await fetch(
+      "http://localhost:3000/download",
+      {
+        method: "POST",
+
+        headers: {
+            "Content-Type": "text/plain"
+        },
+
+        body: texto
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Erro");
+    }
+
+    const blob = await response.blob();
+
+    const url =
+      window.URL.createObjectURL(blob);
+
+    const a =
+      document.createElement("a");
+
+    a.href = url;
+
+    a.download = "arquivos.zip";
+
+    a.click();
+
+    window.URL.revokeObjectURL(url);
+
+    status.innerText =
+      "Download concluído!";
+
+  } catch(err){
+
+    console.log(err);
+
+    status.innerText =
+      "Erro ao gerar ZIP";
+  }
+}
+
+</script>
+
+</body>
+</html>
