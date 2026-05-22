@@ -12,3 +12,18 @@ L----> backend
         L----> server.js
 L----> frontend
         L----> index.html
+
+comandos que deve dar para rodar:
+
+1 - primeiro vc deve abrir na sua pasta para ele funcionar
+
+2 - depois instalar a dependencias
+        -> npm init -y
+        -> npm install express axios archiver cors
+
+3 - depois para rodar o servidor
+        node server.js (lembra de ta dentro do local que o server.js esta)
+
+4 - eu estava abrindo o front com o live-server, como é só para mim funciono
+
+5 - só usar dai

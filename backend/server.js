@@ -15,6 +15,10 @@ app.use(express.text({
 
 const PORT = 3000;
 
+const CONCORRENCIA = 1;
+
+const START_INDEX = 1;
+
 function encontrarUrls(obj) {
 
   let urls = [];
@@ -25,10 +29,12 @@ function encontrarUrls(obj) {
       typeof item === "string" &&
       item.startsWith("http")
     ) {
+
       urls.push(item);
     }
 
     else if (Array.isArray(item)) {
+
       item.forEach(procurar);
     }
 
@@ -36,6 +42,7 @@ function encontrarUrls(obj) {
       typeof item === "object" &&
       item !== null
     ) {
+
       Object.values(item)
         .forEach(procurar);
     }
@@ -44,6 +51,132 @@ function encontrarUrls(obj) {
   procurar(obj);
 
   return urls;
+}
+
+async function baixarArquivo(
+  url,
+  i,
+  urls,
+  downloadsDir
+) {
+
+  try {
+
+    console.log(`
+===================================
+PROCESSANDO ${i + 1}/${urls.length}
+===================================
+`);
+
+    const response = await axios({
+
+      method: "GET",
+
+      url,
+
+      responseType: "stream",
+
+      timeout: 20000,
+
+      maxRedirects: 5,
+
+      validateStatus: () => true,
+
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
+    });
+
+    if (response.status !== 200) {
+
+      console.log(
+        `STATUS INVÁLIDO: ${response.status}`
+      );
+
+      return false;
+    }
+
+    let nomeArquivo =
+      decodeURIComponent(
+        url
+          .split("/")
+          .pop()
+          .split("?")[0]
+      );
+
+    if (
+      !nomeArquivo ||
+      nomeArquivo.length > 150
+    ) {
+
+      nomeArquivo =
+        `arquivo-${i}`;
+    }
+
+    nomeArquivo =
+      nomeArquivo.replace(
+        /[<>:"/\\|?*]/g,
+        "_"
+      );
+
+    nomeArquivo =
+      `${i}-${nomeArquivo}`;
+
+    const filePath =
+      path.join(
+        downloadsDir,
+        nomeArquivo
+      );
+
+    if (fs.existsSync(filePath)) {
+
+      console.log(`
+ARQUIVO JÁ EXISTE:
+${nomeArquivo}
+`);
+
+      return true;
+    }
+
+    const writer =
+      fs.createWriteStream(filePath);
+
+    response.data.pipe(writer);
+
+    await Promise.race([
+
+      new Promise((resolve, reject) => {
+
+        writer.on("finish", resolve);
+
+        writer.on("error", reject);
+      }),
+
+      new Promise((_, reject) => {
+
+        setTimeout(() => {
+
+          reject(
+            new Error("Timeout writer")
+          );
+
+        }, 30000);
+      })
+    ]);
+
+    return true;
+
+  } catch (err) {
+
+    console.log(`
+ERRO:
+${url}
+
+${err.message}
+`);
+
+    return false;
+  }
 }
 
 app.post("/download", async (req, res) => {
@@ -75,17 +208,111 @@ app.post("/download", async (req, res) => {
       });
     }
 
-    console.log(
-      `Total de URLs: ${urls.length}`
-    );
+    if (START_INDEX >= urls.length) {
+
+      return res.status(400).json({
+        erro:
+          "START_INDEX maior que total de URLs"
+      });
+    }
+
+    console.log(`
+===================================
+TOTAL DE URLS:
+${urls.length}
+
+COMEÇANDO EM:
+${START_INDEX}
+===================================
+`);
 
     const tempDir =
       path.join(__dirname, "temp");
 
-    if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, {
+      recursive: true
+    });
 
-      fs.mkdirSync(tempDir, {
-        recursive: true
+    const downloadsDir =
+      path.join(tempDir, "downloads");
+
+    fs.mkdirSync(downloadsDir, {
+      recursive: true
+    });
+
+    let sucessos = 0;
+    let erros = 0;
+
+    for (
+      let i = START_INDEX;
+      i < urls.length;
+      i += CONCORRENCIA
+    ) {
+
+      const lote =
+        urls.slice(
+          i,
+          i + CONCORRENCIA
+        );
+
+      const resultados =
+        await Promise.all(
+
+          lote.map((url, index) =>
+            baixarArquivo(
+              url,
+              i + index,
+              urls,
+              downloadsDir
+            )
+          )
+        );
+
+      resultados.forEach((ok) => {
+
+        if (ok) {
+          sucessos++;
+        } else {
+          erros++;
+        }
+      });
+
+      console.log(`
+===================================
+LOTE FINALIZADO
+
+ATÉ:
+${Math.min(
+  i + CONCORRENCIA,
+  urls.length
+)}
+
+SUCESSOS:
+${sucessos}
+
+ERROS:
+${erros}
+===================================
+`);
+    }
+
+    console.log(`
+===================================
+DOWNLOADS FINALIZADOS
+
+SUCESSOS:
+${sucessos}
+
+ERROS:
+${erros}
+===================================
+`);
+
+    if (sucessos === 0) {
+
+      return res.status(400).json({
+        erro:
+          "Nenhum arquivo foi baixado"
       });
     }
 
@@ -98,140 +325,79 @@ app.post("/download", async (req, res) => {
     const output =
       fs.createWriteStream(zipPath);
 
-    const archive = Archiver("zip", {
-      zlib: {
-        level: 0
-      }
-    });
+    const archive =
+      Archiver("zip", {
 
-    archive.on("error", (err) => {
+        zlib: {
+          level: 0
+        }
+      });
 
-      console.log("Erro no Archiver");
-
-      console.log(err);
-
-      if (!res.headersSent) {
-
-        res.status(500).json({
-          erro: "Erro ao gerar ZIP"
-        });
-      }
-    });
-
-    output.on("error", (err) => {
-
-      console.log("Erro no output");
-
-      console.log(err);
-
-      if (!res.headersSent) {
-
-        res.status(500).json({
-          erro: "Erro ao escrever ZIP"
-        });
-      }
-    });
+    archive.pipe(output);
 
     archive.on("progress", (progress) => {
 
       console.log(`
-========================
+===================================
 ZIP PROGRESS
-Arquivos: ${progress.entries.processed}
-Tamanho:
-${(archive.pointer() / 1024 / 1024).toFixed(2)} MB
-========================
+
+ARQUIVOS:
+${progress.entries.processed}
+
+TAMANHO:
+${(
+  archive.pointer() /
+  1024 /
+  1024
+).toFixed(2)} MB
+===================================
 `);
     });
 
-    archive.pipe(output);
+    archive.on("error", (err) => {
 
-    let baixados = 0;
+      console.log(`
+ERRO ZIP
+`);
 
-    for (const url of urls) {
+      console.log(err);
+    });
 
-      try {
+    const arquivos =
+      fs.readdirSync(downloadsDir);
 
-        console.log(
-          `Baixando ${baixados + 1}/${urls.length}`
+    for (const arquivo of arquivos) {
+
+      const filePath =
+        path.join(
+          downloadsDir,
+          arquivo
         );
 
-        const response = await axios({
-
-          method: "GET",
-
-          url,
-
-          responseType: "stream",
-
-          timeout: 15000,
-
-          maxRedirects: 5,
-
-          validateStatus: () => true
-        });
-
-        if (response.status !== 200) {
-
-          console.log(
-            `Status inválido: ${response.status}`
-          );
-
-          continue;
-        }
-
-        let nomeArquivo =
-          decodeURIComponent(
-            url
-              .split("/")
-              .pop()
-              .split("?")[0]
-          );
-
-        if (
-          !nomeArquivo ||
-          nomeArquivo.length > 150
-        ) {
-
-          nomeArquivo =
-            `arquivo-${baixados}`;
-        }
-
-        nomeArquivo =
-          nomeArquivo.replace(
-            /[<>:"/\\|?*]/g,
-            "_"
-          );
-
-        archive.append(
-          response.data,
-          {
-            name: nomeArquivo
-          }
-        );
-
-        baixados++;
-
-      } catch (err) {
-
-        console.log(
-          "Erro ao baixar:"
-        );
-
-        console.log(url);
-
-        console.log(err.message);
-      }
-    }
-
-    if (baixados === 0) {
-
-      return res.status(400).json({
-        erro: "Nenhum arquivo foi baixado"
+      archive.file(filePath, {
+        name: arquivo
       });
     }
 
-    console.log("Finalizando ZIP...");
+    console.log(`
+===================================
+FINALIZANDO ZIP
+===================================
+`);
+
+    const monitor =
+      setInterval(() => {
+
+        console.log(`
+ZIP ATUAL:
+${(
+  archive.pointer() /
+  1024 /
+  1024
+).toFixed(2)} MB
+`);
+
+      }, 5000);
 
     await archive.finalize();
 
@@ -242,10 +408,23 @@ ${(archive.pointer() / 1024 / 1024).toFixed(2)} MB
       output.on("error", reject);
     });
 
-    console.log(
-      `ZIP finalizado:
-${(archive.pointer() / 1024 / 1024).toFixed(2)} MB`
-    );
+    clearInterval(monitor);
+
+    console.log(`
+===================================
+ZIP FINALIZADO
+
+TAMANHO:
+${(
+  archive.pointer() /
+  1024 /
+  1024
+).toFixed(2)} MB
+
+SALVO EM:
+${zipPath}
+===================================
+`);
 
     res.download(
       zipPath,
@@ -254,31 +433,26 @@ ${(archive.pointer() / 1024 / 1024).toFixed(2)} MB`
 
         if (err) {
 
-          console.log(
-            "Erro no download:"
-          );
-
           console.log(err);
         }
 
-        try {
+        console.log(`
+===================================
+DOWNLOAD ENVIADO
 
-          fs.unlinkSync(zipPath);
-
-          console.log("ZIP removido");
-
-        } catch (e) {
-
-          console.log(
-            "Erro ao remover ZIP"
-          );
-        }
+NENHUM ARQUIVO FOI APAGADO
+===================================
+`);
       }
     );
 
   } catch (err) {
 
-    console.log("ERRO GERAL:");
+    console.log(`
+===================================
+ERRO GERAL
+===================================
+`);
 
     console.log(err);
 
@@ -293,7 +467,10 @@ ${(archive.pointer() / 1024 / 1024).toFixed(2)} MB`
 
 app.listen(PORT, () => {
 
-  console.log(
-    `Servidor rodando em http://localhost:${PORT}`
-  );
+  console.log(`
+===================================
+SERVIDOR:
+http://localhost:${PORT}
+===================================
+`);
 });
